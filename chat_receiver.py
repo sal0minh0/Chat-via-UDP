@@ -1,33 +1,46 @@
-import random
 import socket
+import random
 
-HOST = "0.0.0.0"
-PORT = 5001
-DROP_RATE = 0.4  # 40% de perda simulada no canal
+# Configurações
+HOST = "0.0.0.0"       # Escuta todas as interfaces de rede
+PORT = 5001            # Porta padrão 
+DROP_RATE = 0.4        # 40% de perda no canal
 
 
 def run_chat_receiver():
-  with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-    s.bind((HOST, PORT))
-    print(f"[Chat Server] Online na porta {PORT} (Drop Rate: {DROP_RATE * 100}%)...")
+    # Socket UDP
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind((HOST, PORT))
+        print(f"=== [Chat Server] Online na porta {PORT}... ===")
 
-    while True:
-      data, addr = s.recvfrom(1024)
+        while True:
+            # Tamanho máximo de buffer
+            data, addr = s.recvfrom(1024)
 
-      # Simulação de descarte de pacote
-      if random.random() < DROP_RATE:
-        print("[CANAL] Pacote descartado artificialmente!")
-        continue
+            # Perda no canal não confiável
+            if random.random() < DROP_RATE:
+                print("=== [CANAL] Pacote descartado! ===")
+                continue
 
-      raw_message = data.decode("utf-8")
+            raw_message = data.decode("utf-8")
 
-      # TODO 1: Fazer o split da mensagem delimitada por '|'
-      # TODO 2: Verificar se a mensagem é do tipo 'MSG'
-      # TODO 3: Extrair o ID da mensagem e o texto do usuário
-      # TODO 4: Exibir no terminal a mensagem recebida e o ID correspondente
-      # TODO 5: Montar o pacote de recibo no formato "DELIVERED|<ID>"
-      # TODO 6: Enviar o recibo de volta para a origem usando s.sendto(..., addr)
+            # Permitir que o usuário digite "|" no input
+            parts = raw_message.split("|", 2)
+
+            if len(parts) == 3 and parts[0] == "MSG":
+                msg_id = parts[1]
+                msg_text = parts[2]
+
+                # Exibe a mensagem recebida com seu id
+                print(f"=== [Recebido de {addr}] MSG ID {msg_id}: {msg_text} ===")
+
+                # Devolve a confirmação para o remetente
+                ack_packet = f"DELIVERED|{msg_id}".encode("utf-8")
+                s.sendto(ack_packet, addr)
+            else:
+                # Descarta pacotes que não sigam o protocolo
+                print(f"=== [Aviso] Datagrama fora do padrão ignorado de {addr}: {raw_message} ===")
 
 
 if __name__ == "__main__":
-  run_chat_receiver()
+    run_chat_receiver()

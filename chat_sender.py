@@ -1,69 +1,101 @@
 import socket
 import threading
 
-TARGET_IP = "127.0.0.1"
+# Configurações
+TARGET_IP = "127.0.0.1"   # Endereço loopback
 PORT = 5001
 
-pending_messages = {}  # Formato sugerido: {id_inteiro: "texto da mensagem"}
+# Controle de estado de mensagens pendentes
+pending_messages = {}
 msg_counter = 1
+
 lock = threading.Lock()
 
-
 def listen_receipts(sock):
-  """Thread em background para receber recibos sem bloquear o terminal."""
-  while True:
-    try:
-      data, _ = sock.recvfrom(1024)
-      raw = data.decode("utf-8")
+    """
+    Thread em segundo plano (DELIVERED|<ID>)
+    sem bloquear a mensagem do usuário
+    """
+    while True:
+        try:
+            data, _ = sock.recvfrom(1024)
+            raw = data.decode("utf-8")
 
-      # TODO 1: Fazer o parsing do recibo recebido
-      # TODO 2: Verificar se o tipo é "DELIVERED"
-      # TODO 3: Extrair o ID confirmado
-      # TODO 4: Com o lock adquirido, remover a mensagem de pending_messages
-      #         e imprimir aviso visual de entrega confirmada (ex: [✓✓ Entregue])
-      pass
-    except Exception:
-      break
+            # Parsing do recibo de entrega
+            parts = raw.split("|", 1)
+            if len(parts) == 2 and parts[0] == "DELIVERED":
+                try:
+                    msg_id = int(parts[1])
+                except ValueError:
+                    continue
+
+                with lock:
+                    if msg_id in pending_messages:
+                        texto = pending_messages.pop(msg_id)
+                        print(
+                            f"\n[Entregue (Check Azul)] MSG {msg_id} ('{texto}') confirmada!\n> ",
+                            end="",
+                            flush=True
+                        )
+        except Exception:
+            break
 
 
 def run_chat_sender():
-  global msg_counter
+    global msg_counter
 
-  with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-    # Inicia a thread que processa os ACKs recebidos em segundo plano
-    listener = threading.Thread(target=listen_receipts, args=(s,), daemon=True)
-    listener.start()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        listener = threading.Thread(target=listen_receipts, args=(s,), daemon=True)
+        listener.start()
 
-    print("=== Mini-Chat UDP ===")
-    print("Comandos especiais:")
-    print("  /status   -> Mostra mensagens ainda pendentes")
-    print("  /reenviar -> Reenvia todas as mensagens pendentes\n")
+        print("=== Chat UDP ===")
+        print("Comandos:")
+        print("  /status   -> Mensagens pendentes")
+        print("  /reenviar -> Reenvia mensagens pendentes\n")
 
-    while True:
-      try:
-        user_input = input("Digite uma mensagem: ").strip()
-        if not user_input:
-          continue
+        while True:
+            try:
+                user_input = input("> ").strip()
+                if not user_input:
+                    continue
 
-        if user_input == "/status":
-          # TODO 5: Exibir quantas e quais mensagens continuam em pending_messages
-          continue
+                # Comando /status: lista mensagens que ainda não receberam o ACK
+                if user_input == "/status":
+                    with lock:
+                        if not pending_messages:
+                            print("[Status] Todas as mensagens foram confirmadas")
+                        else:
+                            print(f"[Status] {len(pending_messages)} mensagem(ns) pendente(s):")
+                            for mid, txt in sorted(pending_messages.items()):
+                                print(f"  - ID {mid}: {txt}")
+                    continue
 
-        if user_input == "/reenviar":
-          # TODO 6: Iterar por todas as mensagens ainda em pending_messages
-          #         e reenviá-las com s.sendto(..., (TARGET_IP, PORT))
-          continue
+                # Comando /reenviar: retransmite pendências
+                if user_input == "/reenviar":
+                    with lock:
+                        if not pending_messages:
+                            print("[Reenvio] Nenhuma mensagem pendente no momento.")
+                        else:
+                            print(f"[Reenvio] Reenviando {len(pending_messages)} mensagem(ns) pendente(s)...")
+                            for mid, txt in pending_messages.items():
+                                packet = f"MSG|{mid}|{txt}".encode("utf-8")
+                                s.sendto(packet, (TARGET_IP, PORT))
+                    continue
 
-        # Fluxo de envio de mensagem normal:
-        # TODO 7: Associar a mensagem ao msg_counter atual e salvar em pending_messages
-        # TODO 8: Montar o pacote no formato "MSG|<ID>|<CONTEUDO>"
-        # TODO 9: Enviar o pacote via UDP usando s.sendto(...)
-        # TODO 10: Incrementar msg_counter e avisar na tela que ela está pendente
+                # Envio de nova mensagem
+                with lock:
+                    current_id = msg_counter
+                    pending_messages[current_id] = user_input
+                    msg_counter += 1
 
-      except KeyboardInterrupt:
-        print("\nEncerrando cliente...")
-        break
+                packet = f"MSG|{current_id}|{user_input}".encode("utf-8")
+                s.sendto(packet, (TARGET_IP, PORT))
+                print(f"[Pendente (Check Cinza)] MSG {current_id} enviada.")
+
+            except KeyboardInterrupt:
+                print("\nEncerrando chat...")
+                break
 
 
 if __name__ == "__main__":
-  run_chat_sender()
+    run_chat_sender()
